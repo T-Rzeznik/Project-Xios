@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ollama-phi3-backend
+    name: ollama-backend
     env: docker
     plan: free
     autoDeploy: true

@@ -1,11 +1,8 @@
-# Use the official Ollama image
+# Use the official Ollama image from Docker Hub
 FROM ollama/ollama
 
-# Preload the Phi-3 model
-RUN ollama pull phi3:3.8b
-
-# Expose default Ollama API port
+# Expose the Ollama API port
 EXPOSE 11434
 
-# Start the Ollama API server
+# Start the Ollama server when the container launches
 CMD ["ollama", "serve"]
