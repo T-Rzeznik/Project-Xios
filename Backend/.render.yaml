@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: ollama-phi3-backend
+    env: docker
+    plan: free
+    autoDeploy: true
+    region: oregon
