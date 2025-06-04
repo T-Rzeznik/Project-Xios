@@ -1,13 +1,10 @@
 FROM ollama/ollama:latest
 
 
-COPY entrypoint.sh /entrypoint.sh
+ENV OLLAMA_MODELS=phi3
 
 
-RUN chmod +x /entrypoint.sh
+EXPOSE 11434
 
 
-EXPOSE 8080
-
-
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["ollama", "serve"]
