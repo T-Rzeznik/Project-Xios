@@ -1,0 +1,15 @@
+streamlit==1.41.1
+pymongo==4.10.1
+python-dotenv==1.0.1
+google-generativeai==0.8.3
+transformers==4.47.1
+torch==2.5.1
+bs4==0.0.2
+beautifulsoup4==4.13.0
+markdown==3.7
+reportlab==4.3.0
+pdfplumber==0.11.5
+pinecone
+openai
+pygame
+pyaudio
