@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ollama-backend
+    name: Backend1
     env: docker
     plan: free
     autoDeploy: true
