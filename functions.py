@@ -27,6 +27,21 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from io import BytesIO
 
+# LangChain
+from langchain.vectorstores import Pinecone
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.memory import ConversationBufferMemory
+from langchain.chains import ConversationChain
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
+from langchain.document_loaders import PyPDFLoader
+from langchain.chains.summarize import load_summarize_chain
+
+# Initialize embedding model
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
 load_dotenv('keys.env')
 
 mongo_uri = os.getenv("MONGODB_URI")
@@ -66,7 +81,13 @@ def map_role(role):
 def initialize_chat_session(model):
     """Initialize a new chat session if one doesn't exist"""
     if "chat_session" not in st.session_state:
-        st.session_state.chat_session = model.start_chat(history=[])
+        llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest")
+        memory = ConversationBufferMemory()
+        st.session_state.chat_session = ConversationChain(
+            llm=llm,
+            memory=memory,
+            verbose=True
+        )
         st.session_state.is_public_lab = False
 
 def initialize_display_history():
@@ -97,7 +118,11 @@ def handle_user_input():
             st.warning("Please generate a lab first.")
             return
 
-        if not is_on_topic(prompt):
+        # Get the current lab context and response
+        lab_context = st.session_state.get('current_session', '')
+        lab_response = st.session_state.get('generated_lab', '')
+
+        if not is_on_topic(prompt, lab_context, lab_response):
             st.error("This tool is specifically designed to assist with Linux labs and related Linux concepts. Please ask a question relevant to these topics.")
             return
 
@@ -425,12 +450,16 @@ def generate_keywords(model):
 
 def fetch_gemini_response(user_query):
     """Fetch response from Gemini model"""
-    try:
-        response = st.session_state.chat_session.send_message(user_query)
-        return response.text
-    except Exception as e:
-        st.error(f"Error generating response: {e}")
-        return "I apologize, but I encountered an error generating a response. Please try again."
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-1.5-pro-latest",
+        google_api_key=os.getenv("GOOGLE_KEY")
+    )
+    prompt = PromptTemplate(
+        input_variables=["query"],
+        template="{query}"
+    )
+    chain = LLMChain(llm=llm, prompt=prompt)
+    return chain.run(query=user_query)
 
 def create_lab_generation_form(model):
     """Create and handle lab generation form"""
@@ -586,6 +615,8 @@ def load_public_session(session_name):
 
 # ===================== Vector Database Operations =====================
 
+# Initialize Pinecone client
+from pinecone import Pinecone, ServerlessSpec
 pc = Pinecone(api_key=os.getenv("PINECONE_KEY"))
 index_name = "cslab"
 dimension = 384
@@ -598,38 +629,81 @@ if index_name not in pc.list_indexes().names():
         spec=ServerlessSpec(cloud="aws", region="us-east-1")
     )
 
-host = pc.describe_index(index_name).host
-index = pc.Index(index_name, host=host)
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+# Initialize vector store
+from langchain_community.vectorstores import Pinecone as LangChainPinecone
+index = pc.Index(index_name)
+vectorstore = LangChainPinecone(
+    index=index,
+    embedding=embedding_model,
+    namespace=st.session_state.get('username', 'guest'),
+    text_key="text"
+)
 
 def query_vectorized_db(user_input):
-    """Query the vectorized database for relevant content"""
-    username = st.session_state.get('username', 'guest')
-    user_embedding = embedding_model.encode(user_input)
-    results = index.query(
-        vector=user_embedding.tolist(), 
-        top_k=3, 
-        include_metadata=True, 
-        namespace=username
-    )
-    threshold = 0.3
-    relevant_matches = [
-        match for match in results.get("matches", [])
-        if match.get("score", 0) >= threshold
-    ]
-    context_texts = []
-    for match in relevant_matches:
-        if match.get("metadata") and match["metadata"].get("text"):
-            context_texts.append(match["metadata"]["text"])
-    return bool(relevant_matches), context_texts
+    """Query the vectorized database for relevant content using LangChain"""
+    try:
+        # Perform similarity search
+        docs = vectorstore.similarity_search(
+            user_input,
+            k=3,
+            namespace=st.session_state.get('username', 'guest')
+        )
+        
+        # Extract text from documents
+        context_texts = [doc.page_content for doc in docs]
+        return bool(context_texts), context_texts
+    except Exception as e:
+        st.error(f"Error querying vector database: {e}")
+        return False, []
 
 def delete_all_data_from_vector_db():
-    """Delete all data from the vector database"""
+    """Delete all data from the vector database using LangChain"""
     try:
-        index.delete(delete_all=True, namespace=st.session_state.get('username', 'guest'))
+        vectorstore.delete(namespace=st.session_state.get('username', 'guest'))
         st.success("All data in the vector database has been deleted successfully.")
     except Exception as e:
         st.error(f"Error deleting data from the vector database: {e}")
+
+def upload_and_process_file():
+    """Upload and process a file for vector database using LangChain"""
+    uploaded_file = st.file_uploader("Upload a PDF or text file", type=["pdf", "txt"])
+    
+    if uploaded_file is not None:
+        try:
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                tmp_file_path = tmp_file.name
+
+            # Load document based on file type
+            if uploaded_file.type == "application/pdf":
+                loader = PyPDFLoader(tmp_file_path)
+            else:
+                loader = TextLoader(tmp_file_path)
+            
+            documents = loader.load()
+            
+            # Split documents into chunks
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200
+            )
+            splits = text_splitter.split_documents(documents)
+            
+            # Add to vector store
+            vectorstore.add_documents(
+                splits,
+                namespace=st.session_state.get('username', 'guest')
+            )
+            
+            st.success(f"Successfully processed and uploaded {uploaded_file.name}")
+            
+        except Exception as e:
+            st.error(f"Error processing file: {e}")
+        finally:
+            # Clean up temporary file
+            if 'tmp_file_path' in locals():
+                os.unlink(tmp_file_path)
 
 # ===================== PDF Generation =====================
 
@@ -693,29 +767,3 @@ def clean_text(text):
     """Clean text by removing extra spaces and newlines"""
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
-
-def upload_and_process_file():
-    """Upload and process a file for vector database"""
-    uploaded_file = st.file_uploader("Upload a PDF or text file", type=["pdf", "txt"])
-    
-    if uploaded_file is not None:
-        if uploaded_file.type == "application/pdf":
-            with pdfplumber.open(uploaded_file) as pdf:
-                text = ""
-                for page in pdf.pages:
-                    text += page.extract_text() + "\n"
-        elif uploaded_file.type == "text/plain":
-            text = uploaded_file.read().decode("utf-8")
-        
-        cleaned_text = clean_text(text)
-        
-        st.write("Cleaned Text:")
-        st.write(cleaned_text)
-        
-        embeddings = embedding_model.encode([cleaned_text])
-        print(f"Generated vector for '{uploaded_file.name}': {embeddings[0]}")
-        print(cleaned_text)
-        
-        username = st.session_state.get('username', 'guest')
-        index.upsert([(uploaded_file.name, embeddings[0].tolist(), {"creator": username, "text": cleaned_text})], namespace=username)
-        print(f"Uploaded vector for '{uploaded_file.name}' to Pinecone.")

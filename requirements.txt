@@ -1,15 +1,35 @@
+# Core dependencies
 streamlit==1.41.1
 pymongo==4.10.1
 python-dotenv==1.0.1
-google-generativeai==0.8.3
+google-generativeai>=0.4.1,<0.5.0
+packaging>=23.2,<24.0
+
+# LangChain and related packages
+langchain==0.1.12
+langchain-google-genai==0.0.11
+langchain-community>=0.0.28
+langchain-core==0.1.31
+
+# Vector store and embeddings
+pinecone-client==3.0.2
+sentence-transformers==2.5.1
 transformers==4.47.1
 torch==2.5.1
+
+# Document processing
 bs4==0.0.2
 beautifulsoup4==4.13.0
 markdown==3.7
 reportlab==4.3.0
 pdfplumber==0.11.5
-pinecone
-openai
-pygame
-pyaudio
+
+# AI and voice
+openai==1.12.0
+pygame==2.5.2
+pyaudio==0.2.14
+SpeechRecognition==3.10.1
+
+# Additional utilities
+pandas==2.2.1
+numpy==1.26.4
